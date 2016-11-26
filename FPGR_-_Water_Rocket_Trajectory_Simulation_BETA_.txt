@@ -1,0 +1,1621 @@
+%%% WATER ROCKET TRAJECTORY SIMULATION %%%
+%%         by Finian P.G. Russell	%%
+%%		 (c) 2015		%%
+%%     	    	  _BETA_		%%
+
+
+%%% NOTE FOR DEV: ctrl+f 'NEED2FIN' to find unfinished sections. %%%
+
+% For lines of code related specifically to wind calculations (i.e. lines that can be removed (all together)...
+%  ...to omit the wind calculations while leaving a functional program behind), search "%_WIND_%" (without quotes).
+
+% Many calculations used in this program I had to formulate myself, based on known geometric/trigonometric...
+% ...rules and formulae. Proof diagrams are available upon request, but keep in mind they have NOT been peer assessed so may contain errors.
+% Consequently, this simulation may not be entirely accurate, however it is only intended as a model that attempts to take into account
+% ...as many factors as possible and therefore hopefully makes it more accurate than other basic simulations.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+%
+paragraph = {@(x) (sprintf('%s\n',x));
+	     @(x,y) (sprintf('%s\n',x,y));
+	     @(x,y,z) (sprintf('%s\n',x,y,z))};
+%
+
+
+
+%
+scalarcheck = @(y,x) eval('while (ischar(y) || ~isscalar(y));y = input(x); end');
+%
+
+
+
+disp(paragraph{2}('If at any point you make a mistake with typing an input value,','hold CTRL+C to terminate the program and start over.'))
+
+
+disp(paragraph{1}('WATER ROCKET TRAJECTORY SIMULATION'))
+
+
+disp(sprintf('%s\n',	'This simulation attempts to use as few simplifying assumptions as possible.',...
+			'As such, the factors that may affect a water rocket''s trajectory',...
+			'that have been accounted for in this program are as follows:',...
+			'-Choice to use a launch rod (tube)',...
+			'-Gas phase - burst of air following water phase due to remaining pressure difference',...
+			'-Parachute deployment and resultant change in drag force',...
+			'-Choice of parachute deployment method',...
+			'-Effect of a select few different fin designs on drag and stability',...
+			'-Choice to use cooled water, with additional choice to use ice for this purpose',...
+			'-Choice to use an additive, specifically table salt',...
+			'-Effect of humidity',...
+			'-Elevation of launch site',...
+			'-Latitude of launch site',...
+			'-Effect of transient changes in atmospheric pressure',...
+			'-Effect of change in gravitational force with respect to (wrt) altitude',...
+			'-And finally, the theory of choked flow, applied to the gas phase.'))
+
+
+format bank
+
+
+%%%%%%%%%
+	%
+
+    if	exist('datetime','builtin')
+	disp('ERROR: The current date/time cannot be displayed. Sorry.')
+    else
+	disp(datetime('now'))
+    end
+
+	%
+%%%%%%%%%
+	%
+
+    if	~exist('abs','builtin')
+
+        abs = @(x) (sqrt(x^2));
+
+	absmsg = paragraph{1}('You do not have the MATLAB Symbolic Math toolbox installed (but that''s okay for now).');	
+    else
+        absmsg = paragraph{1}('MATLAB Symbolic Math toolbox installation confirmed.');
+    end
+	disp(absmsg)
+
+	%
+%%%%%%%%%
+
+
+
+%%%%%%%%%%
+y = 1;
+n = 0;
+rerun = y;
+simNum=0;
+%%%%%%%%%%
+
+
+
+% CONSTANTS: %
+
+g = 9.80665;			% (m/s^2)			gravitational constant (assuming sea-level)
+rhoWater = 999.97;		% (kg/m^3)			density of water (no salt etc.)
+atmosPress_STD = 101325;	% (Pa = N/m^2 = kg m/s^2)	atmospheric pressure
+gammaAir = 1.4;			%				 adiabatic index of air (heat capacity ratio)
+gasConst_R = 8.31446;		% (J/K mol = kg m^2 / s^2 K mol) universal gas constant 'R'
+molMassAir = 0.028964;		% (kg/mol)			 molar mass of air
+molMassWtrVpr = 0.018016;	% (kg/mol)			molar mass of water vapour
+rhoAtmosAir = 1.225;		% (kg/m^3)			density of (atmospheric) air, assuming sea-level, 15 deg. C conditions
+seaLevelTemp = 288.15;		% (K)				temp. at mean sea-level
+tempLapseRate = 0.0065;		% (K/m)				temp. lapse rate (rate of change in temp. wrt altitude) (9.8 deg.C per km)
+earthRad = 6371000;		% (m)				mean Earth radius
+
+g45 = 9.806;
+gPoles = 9.832;
+gEquator = 9.78;
+
+
+
+while	rerun == 1
+%%%%%
+
+simNum = simNum+1;
+
+
+
+% INPUTS REQUIRED %
+% Below is a list of variables that start with placeholder values.
+
+placeholder = 'X';
+
+[	bottleVol,...		% total volume of bottle
+	waterVol,...		% max water volume / initial water volume
+	bottleMass,...		% mass of empty bottle
+	payloadMass,...		% mass of payload (camera, parachute and timer/accelerometer)
+	airPress,...		% initial air pressure in bottle (from pumping)
+	thetaHoriz,...		% launch angle from vertical
+	ambient_temp,...	% ambient temperature
+	nozDiameter,...		% diameter of nozzle
+	chuteDeployType,...	% parachute deployment method
+	chuteDiameter,...	% diameter of parachute
+	chuteHoleDiam,...	% diameter of hole in parachute
+	R_r,...			% rocket cylinder & cone base radius
+	R_h,...			% rocket cylinder height
+	cone_l,...		% rocket cone length (for cone nose)
+	frustum_l,...		% rocket nose frustum length (for rounded nose)
+	ball_r,...		% rocket nose ball radius (for rounded nose)
+	RampRod_length,...	% length of ramp or rod
+	launchHeight,...	% launch height from ground
+	deployTime,...		% parachute time of deployment
+	RelHumidity,...		% relative humidity (%)
+	R_elevation,...		% elevation above sea-level
+	R_latitude,...		% latitude of launch site
+	waterCooling,...	% used for option to choose water temperature
+	iceMass,...		% mass of ice used to cool water, if used.
+	saltMass,...		% mass of salt added, if any.
+	distRocketCOM,...	% distance from reference line (nose tip) to centre of mass of empty (dry) bottle, incl. fins, payload & recovery system.
+	numOfFins,...		% number of fins used.
+	fin_type,...		% profile of fins.
+	leadEdge,...		% leading edge of fins.
+	trailEdge,...		% trailing "	"
+	innerEdge,...		% inside edge of fin (attached to rocket body).
+	outerEdge,...		% outside edge, parallel to inside edge of fins.
+	slantEdge,...		% slanted edge if using a five-sided fin profile.
+	finHeight,...		% special parameter for curved fins (where the curves are assumed to be elliptical)
+	finWidth,...		% special parameter for curved fins
+	distToFins,...		% distance from nose tip to fin tips, for those who don't put them at the bottom...
+	launchDirection,...	% launch direction (use the shadows cast by the sun!)	%_WIND_%
+	windDirection,...	% wind direction (see weather.com & enter postcode)	%_WIND_%
+	windVelocity_i,...	% wind speed (see weather.com & enter postcode)		%_WIND_%
+	use_wind	] = deal(placeholder);						%_WIND_%
+						
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+scalarcheck(bottleVol,'Enter value for bottle volume (in litres): ');
+
+	bottleVol = bottleVol*10^-3;			% conversion from litres to m^3
+
+
+while	ischar(waterVol) || ~isscalar(waterVol)
+	waterVol = input('Enter value for initial (max) water volume (in litres): ');
+
+	waterVol = waterVol*10^-3;			% conversion from litres to m^3
+
+	if	waterVol > bottleVol
+		disp('The water volume you inputted exceeds the bottle''s volume! Try again.')
+		waterVol = 'placeholder';
+	end
+end
+
+	waterMass_n0 = rhoWater*waterVol;		% mass of water (initially)
+	i_waterMass = waterMass_n0;			% same thing, used later for Isp calculations.
+
+
+scalarcheck(bottleMass,'Enter value for mass of empty bottle (in kg): ');
+
+
+scalarcheck(payloadMass,'Enter value for the total mass of the payload (in kg): ');
+
+	totalDryMass = bottleMass + payloadMass;	% total mass without water
+
+
+while	ischar(airPress) || ~isscalar(airPress)
+	airPress = input('Enter value for initial guage air pressure within bottle applied by pump (in psi): ');
+
+	if	airPress > 140
+		safetyMsg = input( paragraph{2}('The guage air pressure you inputted is very high and may result in damage to the bottle!','If you''d like to change this hit y for yes, otherwise hit n for no. ') );
+
+		if	safetyMsg == true
+			airPress = 'placeholder';
+		end
+	end
+end
+
+	airPress = (airPress * 6894.75) + atmosPress_STD;	% conversion from psi to Pa, also accounting for guage pressure vs. absolute pressure.
+
+	i_airPress = airPress;				% initial air pressure, required if using launch rod.
+
+
+while	ischar(thetaHoriz) || ~isscalar(thetaHoriz)
+	thetaHoriz = input('Enter value for launch angle (from the horizontal) (in degrees): ');
+
+	if	thetaHoriz > 90
+		disp('The angle you inputted needs to be acute! Try again.')
+		thetaHoriz = 'placeholder';
+	end
+end
+
+	thetaVerti = 90 - thetaHoriz;
+
+
+scalarcheck(ambient_temp,'Enter value for the ambient temperature (in deg. Celsius): ');
+
+	ambient_temp = ambient_temp + 273.15;		% converstion from deg. Celsius to Kelvin
+
+	P_sat = (   (  exp( 77.3450 + (0.0057*ambient_temp) - (7235/ambient_temp) )  ) / ambient_temp^8.2   );
+												% saturation vapour pressure
+
+
+scalarcheck(nozDiameter,'Enter value for the diameter of the bottle''s nozzle (in cm): ');
+
+	nozzleArea = pi * ( ((nozDiameter/100)^2) / 4 );	% cross-sectional area of the bottle's nozzle
+
+
+
+timer = 'Timer';
+accelerometer = 'Accel';
+
+while	~islogical(timer) && ~islogical(accelerometer)
+
+	chuteDeployType = paragraph{2}(	'Are you using a timer or accelerometer to deploy the parachute?','Type ''timer'' or ''accelerometer'' without quotation marks. ');
+
+	chuteDeployType = input(chuteDeployType);
+
+		if	chuteDeployType == timer
+
+			timer = true;
+				while	ischar(deployTime) || ~isscalar(deployTime)
+					deployTime = input('Enter the time the parachute will be set to deploy (in secs): ');
+				end
+			accelerometer = false;
+
+		elseif	chuteDeployType == accelerometer
+
+			accelerometer = true;
+			timer = false;
+
+		else
+			disp('Wrong answer! Try again.')
+		end
+end
+
+
+
+scalarcheck(chuteDiameter,'Enter value for the diameter of the parachute (in cm): ');
+
+	chuteArea = pi * ( ((chuteDiameter/100)^2) / 4 );	%  area of the parachute incl. hole
+
+
+scalarcheck(chuteHoleDiam,'Enter value for the diameter of the hole in the parachute (in cm) - 0 if there''s no hole: ');
+
+	chuteHoleArea = pi * ( ((chuteHoleDiam/100)^2) / 4 );	%  area of the hole in the parachute
+
+	parachute_area = chuteArea - chuteHoleArea;	% actual area of parachute (affected by drag)
+
+
+scalarcheck(R_r,'Enter value for the diameter - or width - of the bottle (in cm): ');
+
+	R_r = R_r/200;
+
+scalarcheck(R_h,'Enter value for the length - or height - of the bottle, ignoring the nose (in cm): ');
+
+	R_h = R_h/100;
+
+
+
+cone = 'Cone';
+ball = 'Ball';
+
+while	~islogical(cone) && ~islogical(ball)
+
+	nose_type = paragraph{2}('Are you using a cone or hemisphere (i.e. half a foam ball) for the rocket''s nose?','Type ''cone'' or ''ball'' without quotation marks. ');
+
+	nose_type  = input(nose_type);
+
+		if	nose_type  == cone
+
+			cone = true;
+
+				while	ischar(cone_l) || ~isscalar(cone_l)
+					cone_l = input('Enter value for the length of the curved side of the cone (in cm): ');
+				end
+					cone_l = cone_l/100;
+
+			nose_area = (pi * R_r * cone_l);
+
+			
+		elseif	nose_type  == ball
+
+			ball = true;
+
+				while	ischar(frustum_l) || ~isscalar(frustum_l)
+					frustum_l = input('Enter value for the length of the curved side of the nose (i.e. the frustum) (in cm): ');
+				end
+					frustum_l = frustum_l/100;
+
+				while	ischar(ball_r) || ~isscalar(ball_r)
+					ball_r = input('Enter value for the diameter of the ball used for the nose (in cm): ');
+				end
+					ball_r = ball_r/200;
+
+			nose_area = (2 * pi * (ball_r)^2) + (pi * R_r * ball_r * frustum_l);
+
+
+		else
+			disp('Wrong answer! Try again.')
+		end
+end
+
+	R_surface_area = (2 * pi * R_r * R_h) + nose_area;	% surface area of rocket 
+
+							% (or rather, area affected by drag, considering drag due to both form drag and skin friction)
+
+						% the skin friction on the fins is being treated as negligable, largely due to the fact that they can be any kind of irregular shape.
+
+ramp = 'Ramp';
+rod = 'Rod';
+
+while	~islogical(ramp) && ~islogical(rod)
+
+	ramp_rod = paragraph{2}('Are you using a launch rod (hollow, goes inside bottle) or ramp (i.e. guide rails)?','Type ''ramp'' or ''rod'' without quotation marks. ');
+
+	ramp_rod = input(ramp_rod);
+
+		if	ramp_rod == ramp
+
+			ramp = true;
+			rod = false;
+			
+		elseif	ramp_rod == rod
+
+			rod = true;
+
+		else
+			disp('Wrong answer! Try again.')
+		end
+end
+
+
+
+scalarcheck(RampRod_length,'Enter value for length of the ramp or rod used (cm): ');
+
+	RampRod_length  = RampRod_length/100;
+
+
+
+scalarcheck(launchHeight,'Enter value for launch height above ground (cm): ');
+
+	launchHeight = launchHeight/100;
+
+
+while	ischar(RelHumidity) || ~isscalar(RelHumidity)
+	RelHumidity = input('Enter the relative humidity at the place/time of your test (see weather.com), ignoring the per-cent symbol: ');
+	if	RelHumidity > 100
+		disp('The humidity cannot be greater than 100pc! Try again.')
+		RelHumidity = 'placeholder';
+	end
+end
+	RelHumidity = RelHumidity/100;
+
+	P_WaterVapour = P_sat*RelHumidity;			% pressure of water vapour
+	P_DryAir = atmosPress_STD - P_WaterVapour;		% partial pressure of dry air
+
+	rhoAir_Humid = ( (P_DryAir*molMassAir) + (P_WaterVapour*molMassWtrVpr) ) / (gasConst_R*ambient_temp);
+
+
+scalarcheck(R_elevation,'Enter a value for the elevation above mean sea-level of the launch site (see mapcoordinates.net) (metres): ');
+
+	atmosPress = atmosPress_STD;
+
+
+scalarcheck(R_latitude,'Enter a value for the latitude of the launch site (see mapcoordinates.net): ');
+
+	g_initial = g45 - (  0.5*(gPoles - gEquator)*cos( 2*R_latitude*(pi/180) )  );				% first value for gravitational acceleration acting on rocket (wrt latitude).
+
+
+
+scalarcheck(waterCooling,(paragraph{2}('Water can be cooled to increase its density, by melting ice into it for example.','Enter value for the initial temperature of your water (in Celsius), or hit n for no to skip this: ')));
+
+	if	waterCooling == false
+		waterTemp = ambient_temp;
+	else
+		waterTemp = waterCooling + 273.15;
+	end
+
+	rhoWater = 0.00002*waterTemp^3 - 0.0195*waterTemp^2 + 7.0141*waterTemp + 206.46;	% density of water wrt temperature (in Kelvin), found by extrapolating from a plot of a table of values for the two variables.
+
+		while	( ischar(iceMass) || ~isscalar(iceMass) ) || iceMass < 0
+
+			iceMass = input(paragraph{2}('If using ice to cool the water, enter a value for the','total mass of ice you''ll use, otherwise hit ''n'' to skip: '));
+		end
+
+			if	iceMass > 0
+				waterMass_n0 = waterMass_n0 + iceMass;	% when the ice melts, it will be water with density equal to the density of the orignal volume of water.
+				waterVol = waterVol + iceMass/rhoWater;
+			end
+
+
+
+use_salt = input(paragraph{3}('Additives can be used to increase the density of the fluid flow, provided the effect on viscosity is small.','This simulation can approximate the effect of using table salt (NaCl) as an additive.','If you''ll be using salt hit y for yes, otherwise hit n for no.'));
+
+% using additives will increase the fluid density AND viscosity, but the visocity will still be low enough that the fluid is considered Newtonian
+% and viscosity will be independant of flow rate (the velocity won't be affected).
+
+if	use_salt == true
+
+
+	while	ischar(saltMass) || ~isscalar(saltMass)
+		saltMass = input('Enter value for the amount of salt you will add (in grams): ');
+
+		saltMass = saltMass/1000;	% grams to kg conversion
+
+		saltWeight_pc = ((saltMass/(saltMass+waterMass_n0))*100);
+
+
+		if	saltWeight_pc > 28	% saturated brine is about 28% salt by weight for the highest water temperatures.
+
+			disp( paragraph{2}('The value you entered for the amount of salt is too great - it is beyond the','saturation point of salt in water. Try again.') )
+
+			saltMass = 'placeholder';
+		end
+	end
+
+
+	brineMass = waterMass_n0 + saltMass;
+
+	waterMass_n0 = brineMass;
+
+
+	a2 = 0.0000007*saltWeight_pc^3 - 0.00002*saltWeight_pc^2 - 0.0007*saltWeight_pc + 0.0468;
+
+	a3 = 0.0002*saltWeight_pc^3 - 0.0045*saltWeight_pc^2 + 0.2589*saltWeight_pc + 71.398;
+
+
+	temp_C = waterTemp - 273.15;	% Kelvin to Celsius.
+
+	temp_F = 1.8*temp_C + 32;	% Celcius to Farenheit (required for next calculation).
+
+
+	rhoBrine_imperial = a3 - (a2*temp_F);
+
+	% equation found online - equations for the above values ('a2' & 'a3') are cubic polynomial approximations of the relationship between a2,a3 & salt weight pc,
+	% found by plugging tables of values into Excel.
+
+
+	rhoBrine_metric = rhoBrine_imperial*16.018463374;	% conversion from lb/ft^3 to kg/m^3.
+
+	rhoWater = rhoBrine_metric;	% sets the water density used in further calculations to be the brine density.
+
+
+	waterVol = brineMass/rhoBrine_metric;
+
+end
+
+
+%
+inputMatrix = paragraph{3}(['Initial water volume = ',num2str(waterVol),' metres^3'],['Initial absolute air pressure = ',num2str(airPress),' Pascals'],['Launch angle from ground = ',num2str(thetaHoriz),' degrees']);
+%
+
+
+switch	nose_type
+
+	case	cone
+
+		rocket_length = (  R_h + sqrt( cone_l^2 - R_r^2 )  );
+
+		Proj_noseArea = R_r*sqrt( cone_l^2 - R_r^2 );
+
+		nose_COP = (2/3)*(sqrt( cone_l^2 - R_r^2 ));
+
+
+	case	ball
+
+		rocket_length = (  R_h + sqrt( frustum_l^2 - (R_r - ball_r)^2 )  + ball_r);
+
+		Proj_noseArea = (0.5 * pi * ball_r^2) + (  ( sqrt( frustum_l^2 - ((R_r - ball_r)/2)^2 ) /2) * ( ball_r + R_r )  );
+
+			frustum_h = (  sqrt( frustum_l^2 - (0.5*(R_r-ball_r))^2 )  );	% frustum 'height'
+
+			hemisphere = (ball_r - (4*ball_r)/(3*pi)) * (0.5*pi*ball_r^2);
+			frust_rect = (ball_r+(0.5*frustum_h)) * (ball_r * frustum_h);
+			frust_RAtri = (ball_r+(2/3)*frustum_h) * (0.5*frustum_h*(0.5*(R_r-ball_r)));
+
+		nose_COP = (hemisphere + frust_rect + 2*frust_RAtri) / Proj_noseArea;	% COP of frustum found by splitting it up into regular shapes.
+end
+
+%%%
+
+Proj_bodyArea = 2*R_r*R_h;
+
+%%%
+
+
+while	ischar(numOfFins) || ~isscalar(numOfFins)
+	numOfFins = input( paragraph{1}('Enter a value for the number of fins you''re using: ') );
+
+	if	numOfFins < 3 || numOfFins > 6
+		disp( paragraph{1}('You''ve entered a value that corresponds to either too few or too many fins. Try again.') );
+		numOfFins = 'placeholder';
+	end
+end
+
+%%%
+
+	disp( paragraph{1}( 'Below are the possible (typical) fin shapes and their corresponding input words:' ) );
+
+	fin_shape.Trapezium = 'trap';
+	fin_shape.Parallelogram = 'para';
+	fin_shape.Triangle = 'tri';
+	fin_shape.Rectangle = 'rect';
+	fin_shape.Pentagon = 'pent';
+	fin_shape.Ellipses = 'curved';
+
+	trap = fin_shape.Trapezium;
+	para = fin_shape.Parallelogram;
+	tri = fin_shape.Triangle;
+	rect = fin_shape.Rectangle;
+	pent = fin_shape.Pentagon;
+	curved = fin_shape.Ellipses;
+
+	disp(fin_shape)
+
+	disp('(''Ellipses'' is for the rare curved fin design.)');
+
+	fin_type = input('Type an input word that corresponds to the shape of your chosen fins: ');
+
+%%%
+
+
+%
+if	fin_type == fin_shape.Ellipses, scalarcheck(finHeight,'Type a value for the max height of the curved fins: '); scalarcheck(finWidth,'Type a value for the max width of the curved fins: ');
+%
+
+if	fin_type ~= fin_shape.Rectangle
+
+	if	fin_type ~= fin_shape.Ellipses
+
+		scalarcheck(leadEdge,'Type a value for the length of the leading edge of the fins: ');
+
+	else
+
+		scalarcheck(trailEdge,'Type a value for the length of the trailing edge of the fins: ');
+
+
+		scalarcheck(innerEdge,'Type a value for the length of the inside edge of the fins: ');
+	end
+end
+
+%
+else
+%
+
+if	fin_type ~= fin_shape.Triangle
+
+	scalarcheck(outerEdge,'Type a value for the length of the outer edge of the fins: ');
+end
+
+
+		switch	numOfFins
+
+			case	3
+				fin_scaleFctr = cos(30*(pi/180));
+							% for projected fin area (a stretch of scale factor <1 causes reduction in area by same scale factor).
+			case	5
+				fin_scaleFctr = cos(18*(pi/180));
+
+			otherwise
+				fin_scaleFctr = 1;
+		end
+
+
+
+	switch	fin_type
+
+		case	fin_shape.Trapezium
+			fin_Area = (  sqrt( leadEdge^2 - trailEdge^2 ) /2  ) * (innerEdge + outerEdge);
+			fin_COP = (  ((2/3)*(innerEdge-outerEdge))*(0.5*(innerEdge-outerEdge)*trailEdge)  +  ((innerEdge-outerEdge)+0.5*outerEdge)*(outerEdge*trailEdge)  ) / fin_Area;
+
+			% fin_COP represents distance from fin ref line (leading edge inner tip, normal to body face) to COP of fin.
+
+		case	fin_shape.Parallelogram
+			fin_Area = leadEdge*outerEdge;
+			fin_COP = ((   ((2/3)*innerEdge)*(   0.5*(  innerEdge+( sqrt(leadEdge^2 - innerEdge^2) )  )   )    ) + (   (innerEdge + (1/3)*outerEdge)*(   0.5*(  outerEdge+( sqrt(trailEdge^2 - outerEdge^2) )  )   )    )) / fin_Area;
+
+
+		case	fin_shape.Triangle
+			if	leadEdge == (sqrt( innerEdge^2 + trailEdge^2 ))	% a right-angled (RA) triangle
+				fin_Area = 0.5*innerEdge*trailEdge;
+				fin_COP = (2/3)*innerEdge;
+			else
+				triPerimtr = (leadEdge+trailEdge+innerEdge)/2;
+				fin_Area = sqrt( triPerimtr * (triPerimtr-leadEdge) * (triPerimtr-trailEdge) * (triPerimtr - innerEdge) );
+
+				leadFinAngle = acos( (innerEdge^2 + leadEdge^2 - trailEdge^2) / (2*innerEdge*leadEdge) );
+				triSplitLine = innerEdge*sin(leadFinAngle);
+
+				leadEdge_split1 = sqrt(innerEdge^2 - triSplitLine^2);
+				leadEdge_split2 = sqrt(trailEdge^2 - triSplitLine^2);
+
+				RAtri1_area = 0.5*triSplitLine*leadEdge_split1;
+				RAtri2_area = 0.5*triSplitLine*leadEdge_split2;
+
+				RAtri1_CoP = ( (2/3)*leadEdge_split1 + (1/3)*triSplitLine*atan(leadFinAngle) ) * cos(leadFinAngle);
+				RAtri2_CoP = ( leadEdge_split1 + (1/3)*leadEdge_split2 + (1/3)*triSplitLine*atan(leadFinAngle) ) * cos(leadFinAngle);
+
+				fin_COP = (RAtri1_CoP*RAtri1_area + RAtri2_CoP*RAtri2_area) / fin_Area;
+			end
+
+		case	fin_shape.Rectangle
+			fin_Area = leadEdge*outerEdge;
+			fin_COP = 0.5*outerEdge;
+
+
+		case	fin_shape.Pentagon
+
+			scalarcheck(slantEdge,'Type a value for the length of the slanted edge of pentagram fins: ');
+
+			fin_Area = (   (leadEdge * innerEdge) + (  sqrt( slantEdge^2 - (innerEdge-outerEdge)^2 ) /2 )*(innerEdge + outerEdge)   );
+			% split pentagon into rectangle & trapezium.
+
+			fin_COP = (  ((2/3)*(innerEdge-outerEdge))*(0.5*(innerEdge-outerEdge)*(trailEdge-leadEdge))  +  ((innerEdge-outerEdge)+0.5*outerEdge)*(outerEdge*(trailEdge-leadEdge))  +  (0.5*innerEdge)*(innerEdge*leadEdge)  ) / fin_Area;
+
+
+		case	fin_shape.Ellipses
+			fin_Area = 0.25 * pi * ( finHeight*finWidth - (finHeight-innerEdge)*(finWidth-trailEdge) );
+			fin_COP = (   (  finHeight-( (4*finHeight)/(3*pi) )  )*(0.25*pi*finHeight*finWidth) - (  finHeight-( 4*(finHeight-innerEdge)/(3*pi) )  )*( 0.25*pi*(finHeight-innerEdge)*(finWidth-trailEdge) )   ) / finArea;
+
+	end
+%
+end
+%
+	Proj_finArea = fin_scaleFctr*fin_Area;
+
+%%%
+
+distTrueCOP = (   (  ( rocket_length-0.5*R_h) * Proj_bodyArea )+(nose_COP*Proj_noseArea)+((rocket_length-distToFins+fin_COP)*2*Proj_finArea)   ) / (Proj_bodyArea + Proj_noseArea + 2*Proj_finArea);
+
+%%%
+
+scalarcheck(distRocketCOM,( paragraph{3}('To find the Centre of Mass of the dry rocket, locate the pivot point where','the rocket is balanced. Measure the distance from the nose tip to the pivot point.','Enter value for distance to Centre of Mass from nose tip (in cm): ') ));
+
+	distRocketCOM = distRocketCOM/100;			% conversion from cm to m
+
+% can't calculate COM because mass is not uniformly distributed, therefore mechanical method may actually be more accurate.
+% COP, which remains static, can be calculated & also prevents need to use mechanical method which would involve using a cardboard cut-out of the rocket profile.
+
+
+scalarcheck( distToFins,paragraph{2}('Enter a value for the distance of the leading edge/tip of your fins','to the tip of the rocket nose (in cm): ') );
+
+
+%%%%%
+
+
+while	~islogical(use_wind)		%_WIND_%
+
+	use_wind = paragraph{3}([],'Would you like to account for the effect of wind (a rough approximation','that assumes constant flow)? Hit y for yes or n for no. ');	%_WIND_%
+
+	use_wind  = input(use_wind);	%_WIND_%
+end					%_WIND_%
+
+
+if	use_wind == true		%_WIND_%
+%
+
+
+	windMSG = paragraph{1}('Below are the possible wind directions and their abbreviations:');	%_WIND_%
+	disp(windMSG);											%_WIND_%
+
+	Directions.North = 'N';		%_WIND_%
+	Directions.East = 'E';		%_WIND_%
+	Directions.South = 'S';		%_WIND_%
+	Directions.West = 'W';		%_WIND_%
+	Directions.NorthEast = 'NE';	%_WIND_%
+	Directions.NorthWest = 'NW';	%_WIND_%
+	Directions.SouthEast = 'SE';	%_WIND_%
+	Directions.SouthWest = 'SW';	%_WIND_%
+
+	disp(Directions)		%_WIND_%
+
+	 N = 0;		%_WIND_%
+	 E = pi/2;	%_WIND_%
+	%S = pi;	%_WIND_%
+	%W = 3*pi/2;	%_WIND_%
+	 NE = pi/4;	%_WIND_%
+	%NW = 7*pi/4;	%_WIND_%
+	 SE = 3*pi/4;	%_WIND_%
+	%SW = 5*pi/4;	%_WIND_%
+
+	 S = -1*pi;		%_WIND_%
+	 W = -1*(pi/2);		%_WIND_%
+	 NW = -1*(pi/4);	%_WIND_%
+	 SW = -1*(3*pi/4);	%_WIND_%
+
+	Directions.North = N;		%_WIND_%
+	Directions.East = E;		%_WIND_%
+	Directions.South = S;		%_WIND_%
+	Directions.West = W;		%_WIND_%
+	Directions.NorthEast = NE;	%_WIND_%
+	Directions.NorthWest = NW;	%_WIND_%
+	Directions.SouthEast = SE;	%_WIND_%
+	Directions.SouthWest = SW;	%_WIND_%
+
+
+
+while	ischar(launchDirection)		%_WIND_%
+	launchDirection = input(paragraph{3}('Type the direction you will be launching the rocket in, e.g. ''N'' for North (without quotation marks),','or alternatively, enter the bearing manually, e.g. type ''272.5'' for West-NorthWest.','Type here: '));	%_WIND_%
+end					%_WIND_%
+
+
+while	ischar(windDirection)		%_WIND_%
+	windDirection = input('Type the direction of the wind flow (rules from previous choice apply here): ');	%_WIND_%
+end					%_WIND_%
+
+
+scalarcheck(windVelocity_i,'Enter value for the wind velocity (in mph): ');					%_WIND_%
+
+	windVelocity_i = windVelocity_i*0.44704;			% conversion from mph to m/s		%_WIND_%
+
+%
+end	%_WIND_%
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+% MAIN PROGRAM / SIMULATION
+
+%% Four phases: launch ramp (or launch rod) phase, water phase, gas phase, free-fall phase.
+
+
+
+timeEnd = 2001;			% initial no. for last iteration in FOR loop (NOT actual number of seconds)
+time_increment = (1/100);	% time increment / time step (actual seconds)
+
+timeArray = 0:2000;
+
+stabilityArray = 0:2000;	% for rocket stability check.
+
+xArray = 0:2000;		% array of values for x- position of rocket ('0' is for initial x- position = 0, since the rocket starts from rest).
+yArray = 0:2000;
+zArray = 0:2000;															%_WIND_%
+
+R_Velocity_Z = 0;	% initially, after escaping launch ramp/rod, rocket travels in direction of launch, then is affected by wind	%_WIND_%
+
+yArray(1) = launchHeight;	% launch height wrt the ground.
+
+g_wrt_altitude = g_initial*(   earthRad/(  earthRad + ( yArray(1) + R_elevation )  )   )^2;	% first value for gravitational acceleration acting on rocket (wrt elevation).
+
+
+accelArray = 0:2000;	% array of values for acceleration of rocket.
+
+veloArray = 0:2000;	% array of values for velocity of rocket.
+
+
+thrustArray = zeros(1,2001);
+
+
+% 2000 is for 2000 1/100th's of a second, so 20 seconds.
+
+
+friction = 0;		% changes if using ramp during launch
+R_velocity = 0;		% initial velocity if using launch ramp or rod.
+
+
+thetaVerti_n1 = thetaVerti*(pi/180);			% initial value for launch angle in radians, followed later on by (changing) flight path angle
+
+alpha_n1 = 0;						% initial value for angle subtended by launch direction vector and perpendicular z- vector, in radians, if considering wind.	%_WIND_%
+
+
+position_n0 = ( launchHeight / cos(thetaVerti_n1) );	% initial position on ramp/rod wrt launch height
+
+
+yDiff = 1;
+	  % initial value for an equation that determines whether the rocket is ascending/descending (further down in code)
+
+
+
+airVol_n0 = bottleVol - waterVol;			% initial air volume
+
+airMass_n0 = airVol_n0 * rhoAir_Humid;			% initial mass of air, without pumping (not compressed)
+
+
+
+%%airMass_n1 = airPress / (  ( gasConst_R * airTemp_n1 ) / ( molMassAir * airVol_n1 )  );%%
+%%airMass_n1 = (  (airPress * airVol_n0 * (airMass_n0)^(gammaAir-1) ) / ( ambient_temp * molMassAir * gasConst_R )  )^(1/gammaAir);%%
+
+	airMass_n1 = (airPress * airVol_n0 * molMassAir)/(ambient_temp * gasConst_R);
+	i_airMass = airMass_n1;											% initial mass of air, after pumping (compressed)
+
+
+
+dragCoef	= 0.4;		% drag coefficient (of rocket), estimated based on rocket nose & body geometry
+chute_dragCoef	= 0.8;		% drag coefficient of parachute, estimated [maximum (inflated) ?].
+dischargeCoef	= 0.9;		% discharge coefficient, estimated based on rocket nozzle geometry.
+frictionCoef	= 0.2;		% estimate for kinetic friction coefficient between bottle & ramp, based on materials.
+
+			% these estimates are based on various online sources of empirical data.
+
+
+disp(paragraph{1}('Below are the current values for coefficients that have to be estimated, or otherwise found empirically:'))
+
+coefficients.Rocket_Drag = dragCoef;
+coefficients.Parachute_Drag = chute_dragCoef;
+coefficients.Discharge = dischargeCoef;
+coefficients.Friction = frictionCoef;
+
+disp(coefficients)
+
+change = 1;
+
+changeCoefs = input(paragraph{1}('If you want to use different values for these, type ''change'' without the quotation marks, otherwise just hit enter to continue. '));
+
+	if	changeCoefs == change
+
+		dragCoef = input('Drag coefficient = ');
+		chuteDragCoef = input('Parachute drag coefficient = ');
+		dischargeCoef = input('Discharge coefficient of nozzle = ');
+		frictionCoef = input('Friction coefficient of guide rails (hit enter to skip if not using a ramp) = ');
+
+	end
+
+
+
+% 'Mdot' means mass flow rate.
+% equations displayed as '%%(equation)%%' were alternatives no longer in use, but left in during development in case they were needed.
+
+
+deployTimeCounter = 0;
+deployCounter = 1;
+			% used for parachute deployment sequence.
+
+
+windVeloSqrd_X = 0;	
+windVeloSqrd_Z = 0;
+			% used in wind calculations (if option to use wind is selected)
+distTraversed_Y = 0;
+distTraversed_Z = 0;
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+	for	timeCount = 2:timeEnd
+					% 'timeEnd' allows for an adjustable limit/end to the FOR loop. Also, starting from '2' means the initial values won't be changed, e.g. starting position = (0,0).
+
+
+	    if	(rod ~= true) || (  (yArray(timeCount-1)) > ( (RampRod_length*cos(thetaVerti_n1)) +launchHeight )  )
+														    % no mass flow during launch ROD phase.
+
+						%%% WATER PHASE %%%
+		if	waterMass_n0 > 0
+
+
+			if	airPress > atmosPress
+						
+
+				pressureDiff = airPress - atmosPress;
+
+						waterMdot = nozzleArea * dischargeCoef * sqrt( 2 * rhoWater * pressureDiff );	% from Bernoulli's equation
+
+							waterMass_n1 = waterMass_n0 - waterMdot * time_increment;
+
+
+							if	waterMass_n1 < 0
+								waterMass_n1 = 0;
+							end
+
+
+							%%deltaWaterMass = waterMass_n0 - waterMass_n1;%%
+
+								%%airVol_n1 = airVol_n0 + ( deltaWaterMass / rhoWater );%%
+								  airVol_n1 = bottleVol - (waterMass_n1 / rhoWater);
+
+									  waterVelocity = waterMdot / ( rhoWater * nozzleArea );
+									%%waterVelocity = dischargeCoef * sqrt( (2 * pressureDiff)/rhoWater );%%
+									%%waterVelocity = sqrt( (2 * airPress) / rhoWater );%%
+			
+											  thrust = waterMdot * waterVelocity;
+											%%thrust = ((waterVelocity)^2)*rhoWater*nozzleArea;%%
+
+
+			else
+				warning('ERROR: Either the guage pressure was too low, or there''s a bug in the program.')
+
+
+			end
+
+
+
+				%%airTemp_n1 = airTemp_n0 * ( airVol_n0 / airVol_n1 )^(gammaAir-1);%%
+
+					%%airPress = ( airMass_n1 * gasConst_R * airTemp_n1 ) / ( molMassAir * airVol_n1 );%%
+					  airPress = airPress * ( airVol_n0 / airVol_n1 )^gammaAir;
+
+
+						airVol_n0 = airVol_n1;
+								      % resets air volume
+
+						%%airTemp_n0 = airTemp_n1;%%
+									    % resets air temperature
+
+
+
+
+							waterMass_n0 = waterMass_n1;
+										    % resets water mass
+
+
+
+			%%%
+
+			waterHeight = (waterMass_n1 / rhoWater) / (pi * R_r^2);	% change in water height wrt change in water volume (mass)
+
+			distWaterCOM = rocket_length - 0.5*waterHeight;
+
+			distTrueCOM = (distRocketCOM*totalDryMass + distWaterCOM*waterMass_n1) / (totalDryMass+waterMass_n1);	% ignoring air mass, since effect on COM is negligable
+
+			%%%
+
+
+
+		elseif	waterMass_n0 == 0
+
+
+				if airMass_n1 == i_airMass, waterEndTime = (timeCount-1); end		% needed for labelling end of water phase on graph later.
+
+
+			airTemp_n1 = ambient_temp * (  ( airMass_n1 / airMass_n0 )^(gammaAir-1)  );
+
+			Mach1 = sqrt( (gammaAir * gasConst_R * airTemp_n1) / molMassAir );	% speed of sound in air
+
+
+
+							%%% GAS PHASE %%%
+			if	airPress > atmosPress
+
+
+					%%airTemp_n1 = airTemp_n0 * ( airMass_n1 / airMass_n0 )^(gammaAir-1);%%
+
+
+					rhoAir = airMass_n1 / bottleVol;
+
+
+						airMass_n0 = airMass_n1;
+									% resets air mass
+
+
+							if	(atmosPress/airPress) >= (  ( 2/(gammaAir+1) )^(gammaAir/(gammaAir-1))  )		% meaning, air velocity is 'choked'
+
+								airMdot = nozzleArea * dischargeCoef * sqrt(   gammaAir * (  ( 2/(gammaAir+1) )^( (gammaAir+1)/(gammaAir-1) )  ) * rhoAir * airPress   );
+							else
+								airMdot = nozzleArea * dischargeCoef * sqrt( 2 * rhoAir * pressureDiff );
+							end
+
+
+							  airMass_n1 = airMass_n0 - airMdot * time_increment;
+							%%airMass_n1 = airPress / ( ( gasConst_R * airTemp_n1 ) / ( molMassAir * bottleVol ) );%%
+
+								  airVelocity = airMdot / ( rhoAir * nozzleArea );
+								%%airVelocity = sqrt( (2 * airPress) / rhoAir );%%
+
+								if	airVelocity > Mach1
+									airVelocity = Mach1;
+								end
+			
+									  thrust = airMdot * airVelocity;
+									%%thrust = ((airVelocity)^2)*rhoAir*nozzleArea;%%
+
+
+					airPress = ( airMass_n1 * gasConst_R * airTemp_n1 ) / ( molMassAir * bottleVol );
+
+
+
+
+
+
+						%%% FREE-FALL PHASE %%%
+			else
+
+				thrust = 0;
+					   % assuming the centre of mass is near the nose (where the payload is), the rocket will presumably descend nose-down, so drag equation is still valid.
+
+
+
+			end		% end of IF loop for gas phase.
+
+		end			% end of IF loop for water phase.
+
+	    end				% end of IF loop regarding use of launch rod.
+
+
+
+		thrustArray(timeCount) = thrust;
+
+		total_mass = waterMass_n1 + totalDryMass + airMass_n1;
+		weight = total_mass * g_wrt_altitude;
+
+
+			%%%%%%%%
+			%
+
+			if	( (timer == true) && (timeArray(timeCount-1) == deployTime) ) || ( (accelerometer == true) && (yDiff == -1) )
+
+				if deployCounter == 1, timeToDeploy = (8*chuteDiameter*3.28)/( (R_velocity*3.28)^9 ); deployCounter = deployCounter-1; end
+							% approximation for time taken for deployment - includes imperial->metric conversion, since orignal equation used imperial system.
+
+				totalDragArea = R_surface_area + fin_Area*2*numOfFins + parachute_area;
+
+				if	deployTimeCounter < timeToDeploy
+
+					deployTimeCounter = deployTimeCounter + time_increment;
+
+					chute_dragCoef_trans = 	(deployTimeCounter/timeToDeploy)*chute_dragCoef;
+								% transient drag coef of chute during expansion of canopy -> non-linear, since initially drag doesn't change much as chute pops out & starts filling w/ air
+								% however, too many factors to consider so relationship assumed linear for program
+				end
+
+					if	chute_dragCoef_trans > dragCoef
+
+						dragCoef = chute_dragCoef_trans;
+					end
+						% uses most significant source of drag in drag calculations (i.e. when parachute is (almost?) fully deployed, it causes greater drag than the rocket)
+
+			else
+				totalDragArea = R_surface_area + fin_Area*2*numOfFins;
+			end
+
+		%
+		%%%%%%%%
+		%
+
+		if	ramp == true
+
+			friction = frictionCoef * weight*cos(thetaVerti_n1);
+
+		elseif	(rod == true) && (  (yArray(timeCount-1)) <= ( (RampRod_length*cos(thetaVerti_n1)) +launchHeight )  )
+
+			thrust = i_airPress * nozzleArea;
+		end
+							% Calculations based on use of ramp or guide rails/rods.
+	%
+	%%%%%%%%
+	%
+
+		timeArray(timeCount) = (timeCount-1)*time_increment;
+
+
+	if	(   ( (yArray(timeCount-1)) < (RampRod_length*cos(thetaVerti_n1)) )   ) && (yDiff == 1)
+
+		drag = 0.5 * rhoAir_Humid * (R_velocity)^2 * totalDragArea * dragCoef;
+											% for initial take-off, drag is negligable so will be treated as zero at take-off (for convenience).
+
+
+		netForce = thrust - drag - weight*cos(thetaVerti_n1) - friction;
+
+
+		acceleration = netForce / total_mass ;
+
+		accelArray(timeCount) = acceleration;
+
+
+		R_velocity = R_velocity + acceleration * time_increment ;
+
+		veloArray(timeCount) = R_velocity;
+
+
+		position_n1 = position_n0 + R_velocity * time_increment;
+
+
+		xArray(timeCount) = sin(thetaVerti_n1)*(position_n1 - position_n0) + xArray(timeCount-1);
+
+		yArray(timeCount) = cos(thetaVerti_n1)*(position_n1 - position_n0) + yArray(timeCount-1);
+
+
+		position_n0 = position_n1;
+					  % resets rocket position on ramp/rod.
+
+
+		R_Velocity_X = R_velocity*sin(thetaVerti_n1);	% horizontal component of rocket velocity - initial value required for when rocket leaves ramp/rod.
+		R_Velocity_Y = R_velocity*cos(thetaVerti_n1);	% vertical component
+
+
+	else
+
+
+		if	use_wind == true		%_WIND_%
+		%
+
+		windVelocity = windVelocity_i * ( yArray(timeCount) / 10 )^(1/7);	%_WIND_%
+
+
+		launch2windAngle = abs(launchDirection-windDirection);	%_WIND_%
+
+
+		% X treated as direction of launch, Z treated as direction rocket may move perpendicular to launch direction due to wind.	%_WIND_%
+		% drag opposite to forward motion, but wind in direction of motion for NE wind, so dragX negative				%_WIND_%
+		% z motion induced by wind, dragZ causes this motion, so dragZ positive if motion is positive					%_WIND_%
+
+
+		windVelocity_x = windVelocity*cos(launch2windAngle);	%_WIND_%
+		windVelocity_z = windVelocity*sin(launch2windAngle);	%_WIND_%
+
+		windVeloSqrd_X = -1*windVelocity_x^2;			%_WIND_%
+		windVeloSqrd_Z = -1*windVelocity_z^2;			%_WIND_%
+
+		%
+		end	%_WIND_%
+
+
+			%%drag_X = 0.5 * rhoAir_Humid * (R_Velocity_X)^2 * totalDragArea * dragCoef;%%
+			%%drag_Y = 0.5 * rhoAir_Humid * (R_Velocity_Y)^2 * totalDragArea * dragCoef;%%
+			drag_X = 0.5 * rhoAtmosAir * ( (R_Velocity_X)^2 + windVeloSqrd_X ) * totalDragArea * dragCoef;	%_WIND_%
+			drag_Y = 0.5 * rhoAtmosAir *   (R_Velocity_Y)^2 		   * totalDragArea * dragCoef;	%_WIND_%
+			drag_Z = 0.5 * rhoAtmosAir * ( (R_Velocity_Z)^2 + windVeloSqrd_Z ) * totalDragArea * dragCoef;	%_WIND_%
+
+
+		%%net_force_X = ( thrust * sin(thetaVerti_n1) ) - drag_X;
+		net_force_X = (  thrust * ( sin(thetaVerti_n1) + cos(alpha_n1) )  ) - drag_X;										%_WIND_%
+		net_force_Z = ( thrust * sin(alpha_n1) ) - drag_Z;				% z-direction treated as negative (wind pushes rocket off course).	%_WIND_%
+
+
+		if	yDiff == -1
+			drag_Y = -1*drag_Y;
+		end
+
+		net_force_Y = ( thrust * cos(thetaVerti_n1) ) - drag_Y - weight;
+
+		if	(   ( (timer == true) && (timeArray(timeCount)) ) >= deployTime   ) || (  (yDiff == -1)  && ( (-1*drag_Y) >= weight )  )
+			net_force_Y = 0;
+		end			% rocket reaches terminal velocity at some point on way down.
+
+
+		acceleration_X = net_force_X / total_mass;
+		acceleration_Y = net_force_Y / total_mass;
+		acceleration_Z = net_force_Z / total_mass;	%_WIND_%
+
+
+		R_Velocity_X = R_Velocity_X + acceleration_X * time_increment;	% from v = u + at, using instantaneous acceleration (considering the small time increments)
+
+			if	R_Velocity_X < 0
+				R_velocity_X = 0;
+			end			 % have to ignore wind again, due to unpredictablity. In reality, the rocket could be pushed back the other way (horizontally) by wind.
+
+		R_Velocity_Y = R_Velocity_Y + acceleration_Y * time_increment;
+
+		R_Velocity_Z = R_Velocity_Z + acceleration_Z * time_increment;	%_WIND_%
+
+
+
+		%%accelArray(timeCount) = sqrt( (acceleration_X)^2 + (acceleration_Y)^2 );%%			% resultant acceleration in direction of flight path.
+		accelArray(timeCount) = sqrt( (acceleration_X)^2 + (acceleration_Y)^2 + (acceleration_Z)^2 );
+
+		%%veloArray(timeCount) = sqrt( (R_Velocity_X)^2 + (R_Velocity_Y)^2 );%%				% resultant  velocity
+		veloArray(timeCount) = sqrt( (R_Velocity_X)^2 + (R_Velocity_Y)^2 + (R_Velocity_Z)^2 );
+
+
+
+if	use_wind == true		%_WIND_%
+%
+	
+	R_Velocity = sqrt( (R_Velocity_X)^2 + (R_Velocity_Y)^2 + (R_Velocity_Z)^2 );	%_WIND_%
+
+	resultantFlow = sqrt( R_Velocity^2 + windVelocity^2 );		%_WIND_%
+
+
+		if	resultantFlow > R_Velocity			%_WIND_%
+
+			AOA = acos( R_Velocity / resultantFlow );	%_WIND_%
+
+
+		elseif	resultantFlow < R_Velocity			%_WIND_%
+
+			AOA = acos( resultantFlow / R_Velocity );	%_WIND_%
+
+		end							%_WIND_%
+			% angle of attack, which is angle of rocket to resultant air flow vector considering free stream & wind.	%_WIND_%
+
+
+			resultantFlow_x = resultantFlow*cos(AOA);	%_WIND_%
+			resultantFlow_z = resultantFlow*sin(AOA);	%_WIND_%
+
+
+coefLift = (2*pi)*AOA;										%_WIND_%
+			% using thin airfoil theory for symmetric airfoil, Cl = 2*pi*AOA	%_WIND_%
+			%initial value of zero, for zero lift @ launch				%_WIND_%
+
+
+
+windLift_x = 0.5 * rhoAir_humid * resultantFlow_x^2 * projArea * coefLift;	%_WIND_%
+windLift_z = 0.5 * rhoAir_humid * resultantFlow_z^2 * projArea * coefLift;	%_WIND_%
+
+
+
+% assuming incompressible flow (low Mach number), low Reynold's number (laminar flow), and Newtonian fluid (non-viscous)	%_WIND_%
+% "For a symmetric airfoil, as angle of attack and lift coefficient change, the center of pressure does not move."		%_WIND_%
+% also assume minimal 'base drag' (due to wake/downwash) due to shape of bottle (tapered?)					%_WIND_%
+% TORQUE = moment of inertia * angular acceleration = lift * static margin							%_WIND_%
+
+
+
+if	waterMass > 0							%_WIND_%
+			distRotaAxis = distWaterCOM - distRocketCOM;	%_WIND_%
+else									%_WIND_%
+
+	switch	nose_type						%_WIND_%
+
+		case	cone						%_WIND_%
+			coneHeight = sqrt(cone_l^2 - R_r^2);									%_WIND_%
+			upperHalfCOM = coneHeight - ((2*R_r*coneHeight)/(R_r+cone_l))/2;	% proof is a bit iffy...	%_WIND_%
+			distRotaAxis = distRocketCOM - ( upperHalfCOM );							%_WIND_%
+									% distance from rotational axis through CoM of rocket to approximate CoM of upper half of rocket	%_WIND_%
+									% (which will be equal to distance to approximate CoM of lower half)					%_WIND_%
+									% assumes a ball is used inside the cone (& ball is most significant mass in absence of water)		%_WIND_%
+		case	ball							%_WIND_%
+			distRotaAxis = distRocketCOM - 0.5*ball_r;		%_WIND_%
+
+	end	%_WIND_%
+end		%_WIND_%
+
+
+
+if	waterMass_n1 == 0								%_WIND_%
+
+	M_of_Inertia = 2*(0.5*(bottleMass+payloadMass)*distRotaAxis^2);			%_WIND_%
+
+else											%_WIND_%
+	M_of_Inertia = 2*(0.5*(bottleMass+payloadMass+waterMass_n1)*distRotaAxis^2);	%_WIND_%
+
+end											%_WIND_%
+									% estimate of moment of inertia of water rocket (model takes water as most significant mass, or...	%_WIND_%
+									% ...ball (added weight to move CoM upwards of CoP) in nose when rocket is emptied of water)		%_WIND_%
+
+
+angularAccel_Y = (windLift_x*staticMargin) / M_of_Inertia;			%_WIND_%
+angularAccel_Z = (windLift_z*staticMargin) / M_of_Inertia;			%_WIND_%
+											% Angular acceleration of rocket - in horizontal & vertical planes.
+angleTraversed_Y = angularAccel_Y * time_increment^2;	% (tilt)		%_WIND_%
+angleTraversed_Z = angularAccel_Z * time_increment^2;	% (swivel)		%_WIND_%
+											% Angle swept by rocket in small time increment based on above acceleration.
+
+mag_R_Velocity = sqrt( R_Velocity_X^2 + R_Velocity_Y^2 + R_Velocity_Z^2 );	%_WIND_%
+											% Magnitude of rocket's velocity (Pythagoras' theorem).
+
+distTraversed_Y = 2 * mag_R_Velocity * sin(angleTraversed_Y/2) * cos(pi/4 - angleTraversed_Y);	% proof in notes - assumes magnitude of rocket remains constant for that brief moment - drag & change in thrust effects applied later.	%_WIND_%
+distTraversed_Z = 2 * mag_R_Velocity * sin(angleTraversed_Z/2) * cos(pi/4 - angleTraversed_Z);	% (as above)																%_WIND_%
+													% displacement caused by tilt/swivel of rocket in wind.
+
+%
+end	%_WIND_%
+
+
+		%%xArray(timeCount) =  R_Velocity_X * time_increment + xArray(timeCount-1);%%
+		%%yArray(timeCount) =  R_Velocity_Y * time_increment + yArray(timeCount-1);%%
+		%%zArray(timeCount) =  R_Velocity_Z * time_increment + zArray(timeCount-1);%%							%_WIND_%
+		%.......................................................................%
+		xArray(timeCount) =  R_Velocity_X * time_increment + xArray(timeCount-1);							%_WIND_%
+		yArray(timeCount) =  R_Velocity_Y * time_increment + yArray(timeCount-1) + distTraversed_Y;					%_WIND_%
+		zArray(timeCount) =  R_Velocity_Z * time_increment + zArray(timeCount-1) + distTraversed_Z;					%_WIND_%
+													% new x- (y- & z-) position(s).		%_WIND_%
+
+
+			yDiff = (yArray(timeCount) - yArray(timeCount-1)) / abs( (yArray(timeCount) - yArray(timeCount-1)) );	% determines whether rocket is ascending or descending, required for calculation of flight path angle.
+
+				switch	yDiff
+
+					case 1
+						thetaVerti_n1 = atan(  ( xArray(timeCount) - xArray(timeCount-1) ) / ( yArray(timeCount) - yArray(timeCount-1) )  );	% ascending
+						% 'atan' is for arctan.
+
+					case -1
+						thetaVerti_n1 = atan(  ( xArray(timeCount) - xArray(timeCount-1) ) / ( yArray(timeCount-1) - yArray(timeCount) )  );	% descending
+
+					otherwise
+						thetaVerti_n1 = pi;													% at max. altitude
+									% since 0/0 is undefined, matlab throws out NaN.
+				end	% end 'switch'
+
+
+						alpha_n1 = atan( ( zArray(timeCount) - zArray(timeCount-1) ) / ( xArray(timeCount) - xArray(timeCount-1) ) );	%_WIND_%
+
+
+	end	% end IF loop regarding use of equations while rocket is on/off ramp/rod.
+
+
+
+	g_wrt_altitude = g_initial*(   (  earthRad/( earthRad + yArray(timeCount) )  )^2   ); % transient changes in gravitational acceleration of rocket
+
+	atmosPress = atmosPress_STD * (   1 - (  ( tempLapseRate * (yArray(timeCount)) )/ seaLevelTemp  )^((g_wrt_altitude*molMassAir)/(gasConst_R*tempLapseRate))   ); % transient changes in pressure
+
+
+
+	staticMargin = distTrueCOP - distTrueCOM;	% COP has to be behind COM for static stability.
+
+
+		switch	staticMargin
+
+			case	staticMargin > 0
+				stabilityArray(timeCount) = true;
+
+			case	staticMargin <= 0
+				stabilityArray(timeCount) = false;
+		end
+
+
+
+		if	( yArray(timeCount) <= 0 ) && ( xArray(timeCount) > 0 )
+										% when the rocket lands, altitude will be zero BUT distance travelled across will be >0, as opposed to =0 when starting from rest.
+
+			yArray(timeCount) = 0;		% rocket lands on ground...
+			veloArray(timeCount) = 0;	% ...and deccelerates to a stop.
+			accelArray(timeCount) = 0;
+
+			timeEnd = timeCount;
+			break		    % ends the FOR loop prematurely to account for landing, otherwise loop continues while rocket is airborne
+		end
+
+
+
+	end	% end of FOR loop
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+stabilityArray(1) = stabilityArray(2);
+
+
+if	timeEnd < 2001
+
+	timeArray((timeEnd+1):2001) = [];
+					  % eliminates unused elements in arrays, if time of flight was under twenty seconds.
+
+	accelArray((timeEnd+1):2001) = [];
+	veloArray((timeEnd+1):2001) = [];
+
+	xArray((timeEnd+1):2001) = [];
+	yArray((timeEnd+1):2001) = [];
+	zArray((timeEnd+1):2001) = [];	%_WIND_%
+
+else
+	warning('ERROR: Either the rocket was airbourne for more than 20 secs, or there''s a bug in the program.')
+end
+
+
+
+writetable((array2table( (thrustArray') ,'VariableNames',{'Thrust'})),'Thrust table of values');	% saves thrust values as a .txt file.
+
+averageThrust = ( sum(thrustArray) / length(thrustArray) );
+
+SpecImpulse = (  averageThrust * ( (timeEnd-1)*time_increment )  ) / (i_waterMass * 9.81);	% specific impulse of water rocket.
+
+totalWetMass = totalDryMass + i_waterMass + i_airMass;
+deltaV = log(totalWetMass/totalDryMass) * specImpulse * 9.81;					% delta V for water rocket.
+
+
+disp(paragraph{2}('The specific impulse of the water rocket in',['this simulation was ',num2str(specImpulse),' seconds.']));
+disp(paragraph{2}('The ''delta V'' of the water rocket in',['this simulation was ',num2str(deltaV),' m/s.']));
+
+
+
+TOF_num = num2str(timeArray(timeEnd));
+Peak_num = num2str(max(yArray));
+Range_num = num2str(xArray(timeEnd));
+
+timeApogee_num = num2str(   timeArray(  find( yArray == max(yArray) )  )   );
+
+
+
+TOF		= ['The Time of Flight was ',TOF_num,' seconds,'];
+Peak		= ['the maximum height/altitude reached was ',Peak_num,' metres,'];
+Range		= ['and the Range was ',Range_num,' metres.'];
+
+
+summary = paragraph{3}(TOF,Peak,Range);
+
+timeAtApogee = paragraph{1}(['The time to reach apogee was ',timeApogee_num,' seconds.']);
+
+
+
+sim_accuracy = (   (  ( timeArray(timeEnd) ) - unstableCount  )/( timeArray(timeEnd) )   )*100;
+
+
+
+unstableCount = 0;
+
+	for	stabilityCount = 1:timeEnd
+
+		if	stabilityArray(stabilityCount) == false;
+
+			unstableCount = unstableCount+time_increment;	% cumulative amount of time the rocket may be unstable for.
+
+		else
+			break
+		end
+	end
+
+
+
+disp(['The rocket may be unstable for the first ',num2str(unstableCount),' seconds of its flight, from launch.'])
+
+disp(paragraph{2}('Based on the level of instability of your rocket design,',['this simulation will be about',num2str(sim_accuracy),' % accurate.']))
+
+
+
+SUM_str = ['Traj_Sim_Test_(',num2str(simNum-1),')','.txt'];
+
+	if	simNum ~= 1
+		movefile('Test results.txt',SUM_str)
+	end
+
+
+save('Test results.txt',TOF_num,Peak_num,Range_num,timeApogee_num)
+
+disp(summary)
+disp(timeAtApogee)
+
+
+
+	input('Hit enter to continue to animated trajectory plot. ');
+
+figure('Name','Trajectory','NumberTitle','off')
+
+
+
+	if	use_wind == true	%_WIND_%
+
+			temp_array = yArray; yArray = zArray; zArray = temp_array;	%_WIND_%
+
+		if	(launchDirection-windDirection) < 0
+
+			temp_array = xArray;			%_WIND_%
+			xArray = zArray;			%_WIND_%
+			zArray = temp_array;			%_WIND_%
+		end						%_WIND_%
+
+
+			axis([0,max(xArray),0,max(yArray),0,max(zArray)])
+	else
+			axis([0,max(xArray),0,max(yArray)])
+	end
+
+
+
+playAnimAgain = 1;
+
+plotSpdMsg1 = paragraph{2}('The trajectory will now be plotted. You have the option to view the plot','going at different speeds, e.g. 1x and 2x for real-time and twice as fast respectively.');
+disp(plotSpdMsg1)
+
+
+while	playAnimAgain == 1
+%
+
+plotSpdMsg2 = paragraph{2}('Please enter a number for the speed the plot animation','will be played at (for example ''1.5'' without quotation marks): ');
+scalarcheck(plotSpeed,plotSpdMsg2);
+
+
+anim_line = animatedline('LineStyle','none','Marker','o');
+anim_count = 1;
+tic;
+
+while	anim_count <= length(xArray)
+
+	time_past = toc;
+
+	      %%if	  time_past >= ( anim_time/(length(xArray)) )%%
+	      %%if	(  time_past <= ( timeArray(anim_count) - timeArray(anim_count-1) )  ) && (  time_past > 0.9*( timeArray(anim_count) - timeArray(anim_count-1) )  )%%				~90% accuracy?
+		if	(  (plotSpeed * time_past) <= ( timeArray(anim_count) - timeArray(anim_count-1) )  ) && (  (plotSpeed * time_past) > 0.9*( timeArray(anim_count) - timeArray(anim_count-1) )  )
+
+
+			%if	use_wind == true
+
+			%	addpoints(anim_line,xArray(anim_count),yArray(anim_count),zArray(anim_count));
+			%else
+
+				addpoints(anim_line,xArray(anim_count),yArray(anim_count)); %_CHANGE_Y_TO_Z when/if including wind...
+
+			%end
+
+
+			drawnow
+
+			anim_count = anim_count + 1 ;
+
+			tic;
+
+		end
+
+end
+
+
+plotSpdMsg3 = paragraph{2}('Would you like to perform the trajectory plot again,','perhaps at a different playback speed? ''y'' for yes, ''n'' for no: ');
+scalarcheck(playAnimAgain,plotSpdMsg3);
+
+%
+end
+
+
+	input('Hit enter to continue to trajectory plot. ');
+
+
+if	use_wind == true		%_WIND_%
+
+	  trajectory = plot3(xArray(1:waterEndTime),yArray(1:waterEndTime),zArray(1:waterEndTime),'-b',xArray(waterEndTime:timeEnd),yArray(waterEndTime:timeEnd),zArray(1:waterEndTime),':k');	%_WIND_%
+else
+	%%trajectory = plot(xArray,yArray,'ko');%%												% Trajectory graph
+	  trajectory = plot(xArray(1:waterEndTime),yArray(1:waterEndTime),'-b',xArray(waterEndTime:timeEnd),yArray(waterEndTime:timeEnd),':k');
+
+end					%_WIND_%
+
+
+
+indexAtMax = find( yArray == max(yArray) );
+
+if	~ischar(deployTime)
+	Index_chute = find(timeArray == deployTime);
+end
+
+
+text((xArray(indexAtMax)),(max(yArray)),'Max. Altitude \rightarrow','HorizontalAlignment','right','VerticalAlignment','bottom')
+
+text((max(xArray)),0,'Range \rightarrow ','HorizontalAlignment','right','Rotation',-45)
+
+text( (xArray(Index_chute)),(yArray(Index_chute)),'Parachute deployed \rightarrow ','HorizontalAlignment','right','Rotation',45)
+
+text( xArray(waterEndTime),yArray(waterEndTime),'\leftarrow End of water phase ','HorizontalAlignment','left','Rotation',-45)
+
+
+title('Trajectory')
+xlabel('x displacement /m')
+
+	if	use_wind == true		%_WIND_%
+
+		ylabel('z displacement /m')	%_WIND_%
+		zlabel('y displacement /m')	%_WIND_%
+	else
+		ylabel('y displacement /m')
+	end					%_WIND_%
+
+
+sim_str = ['Traj_Sim_Num_(',num2str(simNum-1),')','.jpg'];
+
+	if	simNum ~= 1
+		movefile('Trajectory_Simulation.jpg',sim_str)
+	end
+
+saveas(trajectory,'Trajectory_Simulation.jpg')
+
+
+
+	input('Hit enter to continue to velocity wrt time graph. ');
+
+plot(timeArray,veloArray,'ko')			% Velocity/time graph
+
+title('Velocity wrt Time')
+xlabel('time /s')
+ylabel('velocity /(m/s)')
+
+
+	input('Hit enter to continue to acceleration wrt time graph. ');
+
+plot(timeArray,accelArray,'ko')			% Acceleration/time graph
+
+title('Acceleration wrt Time')
+xlabel('time /s')
+ylabel('acceleration /(m/s^2)')
+
+
+
+disp(inputMatrix)
+
+finalQuestion = paragraph{2}('If you''d like to re-run the simulation with different input values,','hit ''y'' for yes, or if not hit ''n'' for no to end the simulation. ');
+rerun = input(finalQuestion);
+%%%%%
+end
+
+%
+disp('END OF SIMULATION')
+%
+
+
+%%% Investigate: http://exploration.grc.nasa.gov/education/rocket/rktsim.html %%%
+
+%% Use below statements instead? %%
+%
+% veloArray_X = cumsum(accelArray_X .* time_increment);
+% veloArray_Y = cumsum(accelArray_Y .* time_increment);
+%
+% posArray_X = cumsum(veloArray_X .* time_increment);
+% posArray_Y = cumsum(veloArray_Y .* time_increment);
+%
